@@ -1,0 +1,5 @@
+error_type,count
+missing_event_id,1
+missing_service,0
+missing_event_type,0
+invalid_timestamp,1
