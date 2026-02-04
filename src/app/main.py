@@ -1,43 +1,58 @@
 from __future__ import annotations
-
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
+import uvicorn as uv
 from fastapi import FastAPI, HTTPException, Query
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 
 metrics_path = Path("output/silver/aggregated_metrics.csv")
 
+# Cache with file modification time tracking
+_metrics_cache = {"data": None, "file_mtime": None}
+
 # Create FastAPI app
 app = FastAPI(title="Metrics API", version="1.0.0")
 
+
+# Main entry point
+def main() -> int:
+    uv.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
+    return 0
+
+
 # Create a local spark session
 spark = (
-    SparkSession.builder 
-        .appName("metrics-api") 
-        .master("local[*]") 
-        .config("spark.sql.session.timeZone", "UTC") 
-        .getOrCreate()
+    SparkSession.builder.appName("metrics-api")
+    .master("local[*]")
+    .config("spark.sql.session.timeZone", "UTC")
+    .getOrCreate()
 )
 
 
 # Load metrics from CSV using Spark
-def get_metrics_filtered(service: Optional[str] = None, from_ts: Optional[str] = None, to_ts: Optional[str] = None) -> List[dict]:
-    
+def get_metrics_filtered(
+    service: Optional[str] = None,
+    from_ts: Optional[str] = None,
+    to_ts: Optional[str] = None,
+) -> List[dict]:
     if not metrics_path.exists():
         return []
-    
+
     df = spark.read.option("header", "true").csv(str(metrics_path))
     if service:
         df = df.filter(F.lower(F.col("service")) == service.lower())
     if from_ts:
-        df = df.filter(F.col("event_ts").cast("timestamp") >= F.lit(from_ts).cast("timestamp"))
+        df = df.filter(
+            F.col("event_ts").cast("timestamp") >= F.lit(from_ts).cast("timestamp")
+        )
     if to_ts:
-        df = df.filter(F.col("event_ts").cast("timestamp") <= F.lit(to_ts).cast("timestamp"))
-    
-    
+        df = df.filter(
+            F.col("event_ts").cast("timestamp") <= F.lit(to_ts).cast("timestamp")
+        )
+
     # Convert filtered Spark DataFrame to list of dicts
     # Convert to pandas and then to list of dicts for easier handling
     return [
@@ -49,8 +64,9 @@ def get_metrics_filtered(service: Optional[str] = None, from_ts: Optional[str] =
             "status_count": _safe_int(row["status_count"]),
             "error_rate": _safe_percentage(row["error_rate"]),
         }
-        for row in df.toPandas().to_dict('records')
+        for row in df.toPandas().to_dict("records")
     ]
+
 
 # Helper function to parse datetime strings
 def _parse_dt(input_date: str) -> datetime:
@@ -65,22 +81,33 @@ def _parse_dt(input_date: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
-
 # Health check endpoint
 @app.get("/health")
 def health() -> dict:
-    # Dynamically count rows in the metrics file
-    metrics_rows = len(get_metrics_filtered())
+    # Count rows using file-change-aware cache
+    if not metrics_path.exists():
+        metrics_rows = 0
+    else:
+        current_mtime = metrics_path.stat().st_mtime
+        if (
+            _metrics_cache["file_mtime"] is None
+            or current_mtime != _metrics_cache["file_mtime"]
+        ):
+            _metrics_cache["data"] = get_metrics_filtered()
+            _metrics_cache["file_mtime"] = current_mtime
+        metrics_rows = len(_metrics_cache["data"])
     return {"status": "ok", "metrics_rows": metrics_rows}
+
 
 # Metrics endpoint with optional filters
 @app.get("/metrics")
 def get_metrics(
-    service: Optional[str] = Query(None, description="Filter by service case-insensitive"),
-    from_ts: Optional[str] = Query(None, alias="from", description="Start datetime (ISO-8601)"),
-    to_ts: Optional[str] = Query(None, alias="to", description="End datetime (ISO-8601)"),
+    service: Optional[str] = Query(
+        None, description="Filter by service case-insensitive"
+    ),
+    from_ts: Optional[str] = Query(None, alias="from", description="Start datetime"),
+    to_ts: Optional[str] = Query(None, alias="to", description="End datetime"),
 ) -> List[dict]:
-
     # Optionally validate from_ts and to_ts format here if needed
     from_dt = None
     to_dt = None
@@ -95,32 +122,38 @@ def get_metrics(
         raise HTTPException(status_code=400, detail="Invalid datetime format")
     return get_metrics_filtered(service, from_ts, to_ts)
 
+
 # Helper functions for safe int conversions
-def _safe_int(val):
+def _safe_int(val: int | float | str) -> int:
     try:
         return int(val)
     except (TypeError, ValueError):
         return 0
+
+
 # Helper functions for safe float conversions
-def _safe_float(val):
+def _safe_float(val: int | float | str) -> float:
     try:
         fval = float(val)
         # check for NaN
-        if fval != fval or fval is None: 
+        if fval != fval or fval is None:
             return 0.00
         return round(fval, 2)
     except (TypeError, ValueError):
         return 0.00
 
-# Helper functions for safe percentage conversions
-def _safe_percentage(val):
-    try:
 
+# Helper functions for safe percentage conversions
+def _safe_percentage(val: int | float | str) -> float:
+    try:
         fval = float(val)
         # check for NaN
         if fval != fval or fval is None:  # check for NaN
-            return "0.0%"
-        return f"{round(fval * 100, 2)}%"
+            return 0.00
+        return round(fval * 100, 2)
     except (TypeError, ValueError):
-        return "0.0%"
+        return 0.00
 
+
+if __name__ == "__main__":
+    raise SystemExit(main())

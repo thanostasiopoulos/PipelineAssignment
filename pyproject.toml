@@ -1,25 +1,32 @@
 [build-system]
-requires = ["setuptools", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
 
-[project]
-name = "futurae-assignment"
+[tool.poetry]
+name = "pipeline-assignment"
 version = "1.0.0"
 description = "Technical assignment"
-requires-python = ">=3.13"
-packages = [{include = "app", from = "src"}, {include = "pipeline", from = "src"}, {include = "tests", from = "src"}]
-dependencies = [
-  "fastapi>=0.110",
-  "uvicorn[standard]>=0.23",
-  "python-dateutil>=2.8",
-  "pyspark>=3.5",
-]
+authors = ["Thanos Tasiopoulos"]
+readme = "README.md"
+packages = [{include = "app", from = "src"}, {include = "pipeline", from = "src"}]
 
-[project.optional-dependencies]
-dev = [
-  "pytest>=7.0",
-  "httpx>=0.24",
-]
+[tool.poetry.dependencies]
+python = ">=3.13"
+python-dateutil = ">=2.8"
+pyspark = ">=3.5"
+fastapi = {extras = ["standard"], version = ">=0.128.1,<0.129.0"}
+ruff = ">=0.15.0,<0.16.0"
+pyarrow = ">=23.0.0,<24.0.0"
+pandas = ">=3.0.0,<4.0.0"
+uvicorn = "^0.40.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=7.0"
+httpx = ">=0.24"
+
+[tool.poetry.scripts]
+run_pipeline = "pipeline.main:main"
+run_app = "app.main:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

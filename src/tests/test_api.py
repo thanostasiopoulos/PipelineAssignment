@@ -1,7 +1,7 @@
-from pathlib import Path
 from fastapi.testclient import TestClient
 
-from app.main import app, metrics_path
+from app.main import app
+
 
 def test_health_endpoint(tmp_path, monkeypatch):
     # create a tiny metrics file
